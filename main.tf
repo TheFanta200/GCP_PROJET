@@ -7,19 +7,19 @@ provider "google" {
 # Variables
 variable "project_id" {
   description = "ID du projet GCP"
-  default     = "esgi-v2"
+  default     = "high-sunlight-458709-i9"
   type        = string
 }
 
 variable "region" {
   description = "Région GCP"
-  default     = "europe-west1"
+  default     = "europe-west9"
   type        = string
 }
 
 variable "zone" {
   description = "Zone GCP"
-  default     = "europe-west1-b"
+  default     = "europe-west9-b" # Change to a different zone
   type        = string
 }
 
@@ -43,8 +43,20 @@ resource "google_compute_subnetwork" "private_subnet" {
   ip_cidr_range            = "10.0.2.0/24"
   region                   = var.region
   network                  = google_compute_network.vpc.id
-  private_ip_google_access = true # Permet l'accès aux services Google sans IP publique
+  private_ip_google_access = true
+
+  # Nouveaux blocs ajoutés pour GKE
+  secondary_ip_range {
+    range_name    = "gke-pods"
+    ip_cidr_range = "10.10.0.0/16" # Plage pour les Pods
+  }
+
+  secondary_ip_range {
+    range_name    = "gke-services"
+    ip_cidr_range = "10.20.0.0/20" # Plage pour les Services
+  }
 }
+
 
 # Création du routeur Cloud pour la NAT Gateway
 resource "google_compute_router" "router" {
@@ -397,4 +409,38 @@ output "vpn_gateway_name" {
 
 output "vpn_tunnel_name" {
   value = google_compute_vpn_tunnel.phasedeux.name
+}
+
+# Cluster GKE privé
+resource "google_container_cluster" "private_gke" {
+  name       = "private-gke-cluster"
+  location   = var.region # Use region instead of a specific zone
+  network    = google_compute_network.vpc.id
+  subnetwork = google_compute_subnetwork.private_subnet.name
+
+  # Configuration IP
+  ip_allocation_policy {
+    cluster_secondary_range_name  = "gke-pods"
+    services_secondary_range_name = "gke-services"
+  }
+
+  # Configuration privée
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = true
+    master_ipv4_cidr_block  = "172.16.0.32/28"
+  }
+
+  # Autorisation d'accès à l'API
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = "192.168.0.0/16"
+      display_name = "reserved-network-access"
+    }
+  }
+
+  # Activer le mode Autopilot
+  enable_autopilot = true
+
+  deletion_protection = false
 }
